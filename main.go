@@ -93,7 +93,7 @@ func main() {
 			if msg.Cmd == CmdNodeOn && save {
 				nodes = append(nodes, &Node{
 					Time:  time.Duration(offset),
-					Index: 87 - msg.Data[0],
+					Index: msg.Data[0],
 				})
 			}
 		}

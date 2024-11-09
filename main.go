@@ -73,23 +73,36 @@ type Node struct {
 }
 
 func main() {
-	reader := OpenFile("INTERNET OVERDOSE.mid")
+	reader := OpenFile("mid/打上花火.mid")
 	mthd := &MThd{}
 	ReadObj(reader, mthd)
-	fmt.Println(mthd)
+	fmt.Println("mthd:", mthd)
 
-	unit := int64(3834354) // 提前算出来的 纳秒值
-	nodes := make([]*Node, 0)
+	mtrks := make([]*MTrk, 0)
 	for i := uint16(0); i < mthd.TrackCnt; i++ {
 		mtrk := ReadMTrk(reader)
-		fmt.Println(len(mtrk.Msgs))
+		fmt.Println("mtrk_len:", len(mtrk.Msgs))
+		mtrks = append(mtrks, mtrk)
+	}
+
+	unit := int64(QNTime) * 1000 / int64(mthd.TPQN) //  纳秒值  四分音节时长/每个四分音节的tick数 = 每个tick的时长
+	fmt.Println("unit:", unit)
+	nodes := make([]*Node, 0)
+	for _, mtrk := range mtrks {
 		offset := int64(0)
 		save := false
 		for _, msg := range mtrk.Msgs {
 			offset += unit * int64(msg.DeltaTick)
 			if msg.Cmd == CmdDeviceChoose {
-				save = msg.Data[0] == 1 // 必须选择钢琴
+				switch msg.Data[0] {
+				case 0, 1, 2, 4, 8: // 必须选择钢琴
+					save = true
+				default:
+					fmt.Println("not_support:", msg.Data[0])
+					save = false
+				}
 			}
+			//save = true // TEST
 			if msg.Cmd == CmdNodeOn && save {
 				nodes = append(nodes, &Node{
 					Time:  time.Duration(offset),
@@ -117,6 +130,10 @@ func main() {
 		if node.Time > current {
 			time.Sleep(node.Time - current)
 			current = node.Time
+		}
+		if node.Index >= 88 {
+			fmt.Println("out range:", node.Index)
+			continue
 		}
 		file, err := os.Open(fmt.Sprintf("res/%d.mp3", node.Index))
 		HandleErr(err)

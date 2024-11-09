@@ -7,7 +7,11 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
+	"sort"
+	"time"
+
+	"github.com/faiface/beep/mp3"
+	"github.com/faiface/beep/speaker"
 )
 
 // https://hanshuliang.blog.csdn.net/article/details/120883929
@@ -55,40 +59,98 @@ var (
 	QNTime = uint32(0)
 )
 
+const (
+	SampleRate = 44100
+)
+
+var (
+	readers = make([]*os.File, 0)
+)
+
+type Node struct {
+	Time  time.Duration
+	Index byte
+}
+
 func main() {
 	reader := OpenFile("INTERNET OVERDOSE.mid")
 	mthd := &MThd{}
 	ReadObj(reader, mthd)
 	fmt.Println(mthd)
 
-	offset := float64(0)
-	unit := 3.834354 / 1000
-	buff := &strings.Builder{}
+	unit := int64(3834354) // 提前算出来的 纳秒值
+	nodes := make([]*Node, 0)
 	for i := uint16(0); i < mthd.TrackCnt; i++ {
 		mtrk := ReadMTrk(reader)
-		//fmt.Println(mtrk)
-		msgs := make([]*Message, 0)
-		for _, m := range mtrk.Msgs {
-			if m.Cmd == CmdNodeOn || m.Cmd == CmdNodeOff {
-				msgs = append(msgs, m)
+		fmt.Println(len(mtrk.Msgs))
+		offset := int64(0)
+		save := false
+		for _, msg := range mtrk.Msgs {
+			offset += unit * int64(msg.DeltaTick)
+			if msg.Cmd == CmdDeviceChoose {
+				save = msg.Data[0] == 1 // 必须选择钢琴
+			}
+			if msg.Cmd == CmdNodeOn && save {
+				nodes = append(nodes, &Node{
+					Time:  time.Duration(offset),
+					Index: 87 - msg.Data[0],
+				})
 			}
 		}
-		if len(msgs) > 0 {
-			fmt.Println(len(msgs), i)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Time < nodes[j].Time
+	})
+
+	err := speaker.Init(SampleRate, SampleRate/10)
+	HandleErr(err)
+	//entries, err := os.ReadDir("res")
+	//HandleErr(err)
+	//for _, entry := range entries {
+	//	file, err := os.Open("res/" + entry.Name())
+	//	HandleErr(err)
+	//	readers = append(readers, file)
+	//}
+
+	current := time.Duration(0)
+	for _, node := range nodes {
+		if node.Time > current {
+			time.Sleep(node.Time - current)
+			current = node.Time
 		}
-		if i == 3 {
-			for _, msg := range mtrk.Msgs {
-				offset += float64(msg.DeltaTick) * unit
-				if msg.Cmd == CmdNodeOn && offset > 0 {
-					buff.WriteString(fmt.Sprintf("sleep %f\n", offset))
-					buff.WriteString("play 60\n")
-					offset = 0
-				}
-			}
-		}
-	} // 原来的单位是 微秒
-	fmt.Printf("每个 tick %f ms , TPQN %d\n", (float64(QNTime)/float64(mthd.TPQN))/1000, mthd.TPQN)
-	fmt.Println(buff.String())
+		file, err := os.Open(fmt.Sprintf("res/%d.mp3", node.Index))
+		HandleErr(err)
+		stream, _, err := mp3.Decode(file)
+		HandleErr(err)
+		speaker.Play(stream)
+	}
+
+	//buff := &strings.Builder{}
+	//for i := uint16(0); i < mthd.TrackCnt; i++ {
+	//	mtrk := ReadMTrk(reader)
+	//	//fmt.Println(mtrk)
+	//	msgs := make([]*Message, 0)
+	//	for _, m := range mtrk.Msgs {
+	//		if m.Cmd == CmdNodeOn || m.Cmd == CmdNodeOff {
+	//			msgs = append(msgs, m)
+	//		}
+	//	}
+	//	if len(msgs) > 0 {
+	//		fmt.Println(len(msgs), i)
+	//	}
+	//	if i == 3 {
+	//		for _, msg := range mtrk.Msgs {
+	//			offset += float64(msg.DeltaTick) * unit
+	//			if msg.Cmd == CmdNodeOn && offset > 0 {
+	//				buff.WriteString(fmt.Sprintf("sleep %f\n", offset))
+	//				buff.WriteString("play 60\n")
+	//				offset = 0
+	//			}
+	//		}
+	//	}
+	//} // 原来的单位是 微秒
+	//fmt.Printf("每个 tick %f ms , TPQN %d\n", (float64(QNTime)/float64(mthd.TPQN))/1000, mthd.TPQN)
+	//fmt.Println(buff.String())
 }
 
 func ReadMTrk(reader *os.File) *MTrk {
